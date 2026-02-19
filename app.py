@@ -192,6 +192,14 @@ def init_db():
         )
     """
     )
+    c.execute(
+        """
+        CREATE TABLE IF NOT EXISTS sync_log (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            ultima_sync TEXT
+        )
+    """
+    )
     conn.commit()
     conn.close()
 
@@ -401,12 +409,43 @@ def sincronizar_dados(modo="parcial"):
                 "analise_produtividade", conn, if_exists="append", index=False
             )
     conn.close()
+
+    # Registra timestamp da sincronização no banco
+    conn_log = sqlite3.connect(DB_FILE)
+    conn_log.execute(
+        "INSERT OR REPLACE INTO sync_log (id, ultima_sync) VALUES (1, ?)",
+        (datetime.now(FUSO_SP).isoformat(),),
+    )
+    conn_log.commit()
+    conn_log.close()
+
     bar.progress(100)
     status.success(f"Atualizado! {len(rows)} registros.")
     st.cache_data.clear()
 
 
 init_db()
+
+
+def precisa_sincronizar() -> bool:
+    """Retorna True se a última sync é anterior às 06:00 de hoje (SP)."""
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        row = conn.execute(
+            "SELECT ultima_sync FROM sync_log WHERE id = 1"
+        ).fetchone()
+        conn.close()
+        if not row:
+            return True  # Nunca sincronizou
+        ultima = datetime.fromisoformat(row[0])
+        if ultima.tzinfo is None:
+            ultima = FUSO_SP.localize(ultima)
+        limite = datetime.now(FUSO_SP).replace(
+            hour=6, minute=0, second=0, microsecond=0
+        )
+        return ultima < limite
+    except Exception:
+        return True
 
 
 @st.cache_data(ttl=300)
@@ -465,6 +504,19 @@ def converter_df_para_excel(df):
 
 
 # --- 4. INTERFACE ---
+
+# Gatilho 1: ?update=true na URL → força sync parcial + limpa parâmetro
+_params = st.query_params
+if _params.get("update") == "true":
+    st.cache_data.clear()
+    sincronizar_dados("parcial")
+    del _params["update"]
+    st.rerun()
+
+# Gatilho 2: auto-sync se a última sync é anterior às 06:00 de hoje (SP)
+if precisa_sincronizar():
+    sincronizar_dados("parcial")
+    st.rerun()
 
 df_clean = ler_dados()
 
