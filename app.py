@@ -3,6 +3,8 @@ import os
 import sqlite3
 from datetime import date, datetime
 
+import pytz
+
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -15,7 +17,7 @@ st.set_page_config(
     page_title="FPM Dashboard",
     layout="wide",
     page_icon="🚜",
-    initial_sidebar_state="collapsed",
+    initial_sidebar_state="expanded",
 )
 
 st.markdown(
@@ -143,6 +145,9 @@ TOKEN = st.secrets["api"]["token"]
 AUTH_USER = st.secrets["api"]["auth_user"]
 AUTH_PASS = st.secrets["api"]["auth_pass"]
 
+# Fuso horário padrão — Streamlit Cloud roda em UTC
+FUSO_SP = pytz.timezone("America/Sao_Paulo")
+
 FILIAIS_ALVO = ["2", "5", "1"]
 ID_UNIDADE = "1"
 TIPO_TICKET = "Entrada Produção"
@@ -206,7 +211,7 @@ def get_json(endpoint, d_ini=None, d_fim=None):
 def sincronizar_dados(modo="parcial"):
     status = st.empty()
     bar = st.progress(0)
-    hoje = datetime.now()
+    hoje = datetime.now(FUSO_SP)
 
     if modo == "parcial":
         dt_inicio = date(hoje.year, hoje.month, 1)
@@ -461,15 +466,23 @@ def converter_df_para_excel(df):
 
 # --- 4. INTERFACE ---
 
-# Header — Última atualização + Sincronização
-try:
-    _db_mtime = os.path.getmtime(DB_FILE)
-    _last_update = datetime.fromtimestamp(_db_mtime).strftime("%d/%m/%Y %H:%M")
-except Exception:
-    _last_update = "—"
+df_clean = ler_dados()
 
-_hdr_left, _hdr_right = st.columns([3, 2])
-with _hdr_left:
+# ── SIDEBAR: Painel de Controle ──
+with st.sidebar:
+    st.markdown("## 🚜 Painel de Controle")
+    st.caption("Use os controles abaixo para sincronizar dados e filtrar o dashboard.")
+
+    # ── Sincronização ──
+    st.markdown("---")
+    st.markdown("#### 🔄 Sincronização")
+
+    try:
+        _db_mtime = os.path.getmtime(DB_FILE)
+        _last_update = datetime.fromtimestamp(_db_mtime, tz=FUSO_SP).strftime("%d/%m/%Y %H:%M")
+    except Exception:
+        _last_update = "—"
+
     st.markdown(
         f'<div class="sync-bar">'
         f'<span>🕐</span>'
@@ -477,7 +490,7 @@ with _hdr_left:
         f'</div>',
         unsafe_allow_html=True,
     )
-with _hdr_right:
+
     _btn1, _btn2 = st.columns(2)
     with _btn1:
         if st.button("🔄 Atualizar Mês", use_container_width=True):
@@ -488,66 +501,56 @@ with _hdr_right:
             sincronizar_dados("total")
             st.rerun()
 
-df_clean = ler_dados()
+    if df_clean.empty:
+        st.warning("⚠️ Banco vazio. Clique em Atualizar.")
+        st.stop()
 
-if df_clean.empty:
-    st.warning("⚠️ Banco vazio.")
-    st.stop()
+    # ── Filtros Hierárquicos (Cascata) ──
+    st.markdown("---")
+    st.markdown("#### 🔍 Filtros")
+    st.caption("Os filtros são encadeados: cada seleção refina o próximo.")
 
-# --- 5. FILTROS HIERÁRQUICOS (CASCATA) ---
-st.markdown("### 🔍 Filtros")
-
-# Layout de 5 colunas para caber o novo filtro
-c1, c2, c3, c4, c5 = st.columns(5)
-
-# 1. Filtro DATA (Mestre)
-with c1:
+    # 1. Filtro DATA (Mestre)
     d_min, d_max = df_clean["data"].min().date(), df_clean["data"].max().date()
     datas = st.slider("Período", d_min, d_max, (d_min, d_max), format="DD/MM/YYYY")
     df_1 = df_clean[
         (df_clean["data"].dt.date >= datas[0]) & (df_clean["data"].dt.date <= datas[1])
     ]
 
-# 2. Filtro CULTURA (Depende da Data)
-with c2:
+    # 2. Filtro CULTURA (Depende da Data)
     opcoes_cultura = sorted(df_1["cultura"].fillna("N/D").unique())
     sel_cultura = st.multiselect("Cultura", options=opcoes_cultura)
     df_2 = df_1[df_1["cultura"].isin(sel_cultura)] if sel_cultura else df_1
 
-# 3. Filtro SAFRA (Depende da Cultura)
-with c3:
+    # 3. Filtro SAFRA (Depende da Cultura)
     opcoes_safra = sorted(df_2["safra_agricola"].unique())
     sel_safra = st.multiselect("Safra Agrícola", options=opcoes_safra)
     df_3 = df_2[df_2["safra_agricola"].isin(sel_safra)] if sel_safra else df_2
 
-# 4. Filtro ÁREA/TALHÃO (NOVO - Depende da Safra)
-with c4:
-    # Usamos talhao_limpo para ficar visualmente melhor, mas filtramos a tabela
+    # 4. Filtro ÁREA/TALHÃO (Depende da Safra)
     opcoes_area = sorted(df_3["talhao_limpo"].unique())
     sel_area = st.multiselect("Área (Talhão)", options=opcoes_area)
     df_4 = df_3[df_3["talhao_limpo"].isin(sel_area)] if sel_area else df_3
 
-# 5. Filtro VARIEDADE (Depende da Área)
-with c5:
+    # 5. Filtro VARIEDADE (Depende da Área)
     opcoes_var = sorted(df_4["variedade"].unique())
     sel_variedade = st.multiselect("Variedade", options=opcoes_var)
     df_view = df_4[df_4["variedade"].isin(sel_variedade)] if sel_variedade else df_4
 
-# Detecta se algum filtro foi selecionado
-filtros_ativos = bool(sel_cultura or sel_safra or sel_area or sel_variedade)
+    # Detecta se algum filtro foi selecionado
+    filtros_ativos = bool(sel_cultura or sel_safra or sel_area or sel_variedade)
 
-# --- BOTÃO DE EXPORTAÇÃO ---
-if not df_view.empty:
-    excel_data = converter_df_para_excel(df_view)
-    st.download_button(
-        label="📥 Baixar Excel (Dados Filtrados)",
-        data=excel_data,
-        file_name=f'relatorio_filtrado_{date.today().strftime("%d_%m_%Y")}.xlsx',
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True,
-    )
-
-st.markdown("<hr class='section-divider'>", unsafe_allow_html=True)
+    # ── Exportação ──
+    st.markdown("---")
+    if not df_view.empty:
+        excel_data = converter_df_para_excel(df_view)
+        st.download_button(
+            label="📥 Baixar Excel",
+            data=excel_data,
+            file_name=f'relatorio_filtrado_{datetime.now(FUSO_SP).strftime("%d_%m_%Y")}.xlsx',
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+        )
 
 if df_view.empty:
     st.warning("🚜 Nenhum dado encontrado para esta combinação de filtros. Tente alterar a data ou a área.")
@@ -565,32 +568,35 @@ if not filtros_ativos:
         .copy()
     )
     df_recentes["data"] = df_recentes["data"].dt.strftime("%d/%m/%Y")
-    st.dataframe(
-        df_recentes[
-            [
-                "data",
-                "numero_romaneio",
-                "talhao_limpo",
-                "cultura",
-                "variedade",
-                "peso_liquido",
-                "sacas",
-            ]
+    _df_rec_styled = df_recentes[
+        [
+            "data",
+            "numero_romaneio",
+            "talhao_limpo",
+            "cultura",
+            "variedade",
+            "peso_liquido",
+            "sacas",
         ]
-        .rename(columns={
-            "data": "Data",
-            "numero_romaneio": "Romaneio",
-            "talhao_limpo": "Área",
-            "cultura": "Cultura",
-            "variedade": "Variedade",
-            "peso_liquido": "Peso Líq. (kg)",
-            "sacas": "Sacas",
-        })
-        .style.format({"Peso Líq. (kg)": "{:,.0f}", "Sacas": "{:,.1f}"})
-        .background_gradient(subset=["Sacas"], cmap="Greens"),
-        use_container_width=True,
-        height=500,
-    )
+    ].rename(columns={
+        "data": "Data",
+        "numero_romaneio": "Romaneio",
+        "talhao_limpo": "Área",
+        "cultura": "Cultura",
+        "variedade": "Variedade",
+        "peso_liquido": "Peso Líq. (kg)",
+        "sacas": "Sacas",
+    })
+    try:
+        # NOTA: background_gradient requer matplotlib (ver requirements.txt)
+        _styled_rec = _df_rec_styled.style.format(
+            {"Peso Líq. (kg)": "{:,.0f}", "Sacas": "{:,.1f}"}
+        ).background_gradient(subset=["Sacas"], cmap="Greens")
+    except ImportError:
+        _styled_rec = _df_rec_styled.style.format(
+            {"Peso Líq. (kg)": "{:,.0f}", "Sacas": "{:,.1f}"}
+        )
+    st.dataframe(_styled_rec, use_container_width=True, height=500)
     st.stop()
 
 # --- KPI GERAL ---
@@ -824,15 +830,16 @@ try:
     df_tab_base = df_tab_base[df_tab_base["produtividade"] <= 2000]
 
     df_tab_display = df_tab_base.sort_values("produtividade", ascending=False).copy()
-    st.dataframe(
-        df_tab_display
-        .style.format(
+    try:
+        # NOTA: background_gradient requer matplotlib (ver requirements.txt)
+        _styled_tab = df_tab_display.style.format(
+            {"sacas": "{:,.1f}", "hectares": "{:,.2f}", "produtividade": "{:,.2f}"}
+        ).background_gradient(subset=["produtividade"], cmap="Greens")
+    except ImportError:
+        _styled_tab = df_tab_display.style.format(
             {"sacas": "{:,.1f}", "hectares": "{:,.2f}", "produtividade": "{:,.2f}"}
         )
-        .background_gradient(subset=["produtividade"], cmap="Greens"),
-        use_container_width=True,
-        height=400,
-    )
+    st.dataframe(_styled_tab, use_container_width=True, height=400)
 
     # --- AUDITORIA ---
     with st.expander("🕵️ Auditoria de Maiores Cargas"):
@@ -841,21 +848,26 @@ try:
         )
         top_tickets = df_interactive.sort_values("sacas", ascending=False).head(50).copy()
         top_tickets["data"] = top_tickets["data"].dt.strftime("%d/%m/%Y")
-        st.dataframe(
-            top_tickets[
-                [
-                    "data",
-                    "numero_romaneio",
-                    "produto_full",
-                    "sacas",
-                    "hectares",
-                    "obs",
-                ]
+        _df_audit = top_tickets[
+            [
+                "data",
+                "numero_romaneio",
+                "produto_full",
+                "sacas",
+                "hectares",
+                "obs",
             ]
-            .style.format({"sacas": "{:,.1f}", "hectares": "{:,.2f}"})
-            .background_gradient(subset=["sacas"], cmap="Reds"),
-            use_container_width=True,
-        )
+        ]
+        try:
+            # NOTA: background_gradient requer matplotlib (ver requirements.txt)
+            _styled_audit = _df_audit.style.format(
+                {"sacas": "{:,.1f}", "hectares": "{:,.2f}"}
+            ).background_gradient(subset=["sacas"], cmap="Reds")
+        except ImportError:
+            _styled_audit = _df_audit.style.format(
+                {"sacas": "{:,.1f}", "hectares": "{:,.2f}"}
+            )
+        st.dataframe(_styled_audit, use_container_width=True)
 
 except Exception:
     st.error("⚠️ Ocorreu um erro ao processar esta visualização. Por favor, ajuste os filtros.")
