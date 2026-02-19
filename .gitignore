@@ -1,0 +1,11 @@
+# Banco de dados local
+dados_fazenda.db
+
+# Segredos do Streamlit (NUNCA versionar)
+.streamlit/secrets.toml
+
+# Cache do Python
+__pycache__/
+
+# Variáveis de ambiente
+.env

@@ -137,11 +137,11 @@ st.markdown(
 
 # --- 2. CONFIGURAÇÕES ---
 DB_FILE = "dados_fazenda.db"
-BASE_URL = "http://api.gsbsoftware.com.br:50013"
-CLIENTE = "CF009228756823711012"
-TOKEN = r"$2a$10$BueYcMU8EZboMx3Fy12S8"
-AUTH_USER = "petrachi"
-AUTH_PASS = "Koxlsr7875S*57Rfg#1"
+BASE_URL = st.secrets["api"]["base_url"]
+CLIENTE = st.secrets["api"]["cliente"]
+TOKEN = st.secrets["api"]["token"]
+AUTH_USER = st.secrets["api"]["auth_user"]
+AUTH_PASS = st.secrets["api"]["auth_pass"]
 
 FILIAIS_ALVO = ["2", "5", "1"]
 ID_UNIDADE = "1"
